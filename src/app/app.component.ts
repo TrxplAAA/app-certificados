@@ -1,9 +1,9 @@
 import { Component } from '@angular/core';
-import { RouterOutlet } from '@angular/router';
+import { CertificateGeneratorComponent } from './certificate-generator/certificate-generator.component';
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet],
+  imports: [CertificateGeneratorComponent],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css'
 })
