@@ -57,7 +57,13 @@ export class CertificateGeneratorComponent implements AfterViewInit {
   showGuideDistances = true;
   guideDistanceLabels: { x?: number; y?: number; value?: string } = {};
   overlayMode:boolean = true;
-  expandedPanels: { [key:string]: boolean } = { __opts: true };
+  expandedPanels: { [key:string]: boolean } = { __opts: false };
+  // Dynamic spacing between close fields (e.g. nombre + apellido) to prevent overlap when data varies
+  dynamicSpacing:boolean = true; // master toggle
+  dynamicSpacingGap:number = 12; // px gap to enforce between adjacent flowing fields
+  dynamicSpacingProximity:number = 10; // if original manual gap < this, treat as a flow group
+  dynamicBaselineTolerance:number = 10; // y-baseline tolerance for grouping
+  private lastEffectivePositions: { [key:string]: { x:number; y:number; width:number } } = {};
 
   availableFonts: string[] = [
     'Arial','Roboto','Lato','Poppins','Montserrat','Open Sans',
@@ -273,29 +279,31 @@ export class CertificateGeneratorComponent implements AfterViewInit {
       this.ctx.restore();
     }
     
-    // Dibujar campos de texto con mejor visualización
+    // Preparar posiciones efectivas (para dynamic spacing) usando primera fila como muestra
+    const effective = this.computeEffectivePositions(this.excelData.length ? this.excelData[0] : null);
+    this.lastEffectivePositions = effective;
+    // Dibujar campos con posiciones efectivas
     this.excelHeaders.forEach(header => {
-      const settings = this.fieldSettings[header];
+      const base = this.fieldSettings[header];
+      const eff = effective[header] || { x: base.x, y: base.y, width: 0 };
       const isSelected = this.selectedFieldName === header;
-      const sampleValue = this.excelData.length ? String(this.excelData[0][header] ?? '') : '';
-      const displayText = this.showRealData && sampleValue ? sampleValue : `[${header}]`;
-  this.ctx!.font = `${settings.fontSize}px ${settings.fontFamily || 'Arial'}`;
-      this.ctx!.fillStyle = settings.color;
-      const textWidth = this.ctx!.measureText(displayText).width;
-  this.ctx!.fillText(displayText, settings.x, settings.y);
+      const displayText = this.getFieldDisplayText(header, this.excelData.length ? this.excelData[0] : null);
+      this.ctx!.font = `${base.fontSize}px ${base.fontFamily || 'Arial'}`;
+      this.ctx!.fillStyle = base.color;
+      this.ctx!.fillText(displayText, eff.x, eff.y);
+      const padding = 5;
       this.ctx!.strokeStyle = isSelected ? '#ff0000' : '#00b894';
       this.ctx!.lineWidth = isSelected ? 3 : 2;
-      this.ctx!.setLineDash(isSelected ? [5, 5] : []);
-      const padding = 5;
+      this.ctx!.setLineDash(isSelected ? [5,5] : []);
       this.ctx!.strokeRect(
-        settings.x - padding,
-        settings.y - settings.fontSize - padding,
-        textWidth + (padding * 2),
-        settings.fontSize + (padding * 2)
+        eff.x - padding,
+        eff.y - base.fontSize - padding,
+        eff.width + padding*2,
+        base.fontSize + padding*2
       );
       this.ctx!.setLineDash([]);
       this.ctx!.fillStyle = isSelected ? '#ff0000' : '#00b894';
-      this.ctx!.fillRect(settings.x - 3, settings.y - settings.fontSize - 3, 6, 6);
+      this.ctx!.fillRect(eff.x - 3, eff.y - base.fontSize - 3, 6, 6);
     });
 
     // Dibujar guías de alineación si existen
@@ -352,27 +360,24 @@ export class CertificateGeneratorComponent implements AfterViewInit {
       
       // Verificar si se hizo clic en algún campo
       let fieldFound = false;
-      for (const header of this.excelHeaders) {
-        const settings = this.fieldSettings[header];
-        const sampleValue = this.excelData.length ? String(this.excelData[0][header] ?? '') : '';
-        const displayText = this.showRealData && sampleValue ? sampleValue : `[${header}]`;
-        const textWidth = this.ctx!.measureText(displayText).width;
-        
-        if (x >= settings.x - 5 && x <= settings.x + textWidth + 5 && 
-            y >= settings.y - settings.fontSize - 5 && y <= settings.y + 5) {
+    for (const header of this.excelHeaders) {
+        const base = this.fieldSettings[header];
+        const eff = this.dynamicSpacing ? this.lastEffectivePositions[header] : { x: base.x, y: base.y, width: this.measureHeaderWidth(header, this.excelData.length ? this.excelData[0] : null) };
+        if (!eff) continue;
+        if (x >= eff.x - 5 && x <= eff.x + eff.width + 5 &&
+            y >= eff.y - base.fontSize - 5 && y <= eff.y + 5) {
           this.isDragging = true;
           this.dragFieldName = header;
           this.selectedFieldName = header;
-          this.dragOffset.x = x - settings.x;
-          this.dragOffset.y = y - settings.y;
+          this.dragOffset.x = x - eff.x;
+          this.dragOffset.y = y - eff.y;
+      this.expandExclusive(header);
           fieldFound = true;
           break;
         }
       }
       
-      if (!fieldFound) {
-        this.selectedFieldName = '';
-      }
+  if (!fieldFound) { this.selectedFieldName = ''; }
       
       this.redrawCanvas();
     });
@@ -386,13 +391,11 @@ export class CertificateGeneratorComponent implements AfterViewInit {
         
         let overField = false;
         for (const header of this.excelHeaders) {
-          const settings = this.fieldSettings[header];
-          const sampleValue = this.excelData.length ? String(this.excelData[0][header] ?? '') : '';
-          const displayText = this.showRealData && sampleValue ? sampleValue : `[${header}]`;
-          const textWidth = this.ctx!.measureText(displayText).width;
-          
-          if (x >= settings.x - 5 && x <= settings.x + textWidth + 5 && 
-              y >= settings.y - settings.fontSize - 5 && y <= settings.y + 5) {
+          const base = this.fieldSettings[header];
+          const eff = this.dynamicSpacing ? this.lastEffectivePositions[header] : { x: base.x, y: base.y, width: this.measureHeaderWidth(header, this.excelData.length ? this.excelData[0] : null) };
+          if (!eff) continue;
+          if (x >= eff.x - 5 && x <= eff.x + eff.width + 5 &&
+              y >= eff.y - base.fontSize - 5 && y <= eff.y + 5) {
             overField = true;
             break;
           }
@@ -406,9 +409,7 @@ export class CertificateGeneratorComponent implements AfterViewInit {
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       
-  const sampleValue = this.excelData.length ? String(this.excelData[0][this.dragFieldName] ?? '') : '';
-  const displayText = this.showRealData && sampleValue ? sampleValue : `[${this.dragFieldName}]`;
-  const textWidth = this.ctx!.measureText(displayText).width;
+  const textWidth = this.measureHeaderWidth(this.dragFieldName, this.excelData.length ? this.excelData[0] : null);
       let newX = x - this.dragOffset.x;
       let newY = y - this.dragOffset.y;
       // Snapping
@@ -421,10 +422,10 @@ export class CertificateGeneratorComponent implements AfterViewInit {
       this.alignmentGuideY = null;
       if (this.showAlignmentGuides) {
         const moving = this.fieldSettings[this.dragFieldName];
-        const movingMidX = moving.x + (this.ctx!.measureText(displayText).width / 2);
-        const movingMidY = moving.y - (moving.fontSize / 2);
-        const movingTop = moving.y - moving.fontSize;
-        const movingWidth = this.ctx!.measureText(displayText).width;
+  const movingWidth = textWidth;
+  const movingMidX = moving.x + (movingWidth / 2);
+  const movingMidY = moving.y - (moving.fontSize / 2);
+  const movingTop = moving.y - moving.fontSize;
         let closestXDiff = Number.MAX_VALUE;
         let closestYDiff = Number.MAX_VALUE;
         let chosenLabel = '';
@@ -475,8 +476,8 @@ export class CertificateGeneratorComponent implements AfterViewInit {
       // Límites
       newX = Math.max(0, Math.min(newX, this.canvas!.width - textWidth - 10));
       newY = Math.max(20, Math.min(newY, this.canvas!.height - 10));
-      this.fieldSettings[this.dragFieldName].x = newX;
-      this.fieldSettings[this.dragFieldName].y = newY;
+  this.fieldSettings[this.dragFieldName].x = newX;
+  this.fieldSettings[this.dragFieldName].y = newY;
       this.lastDragPosition = {x:newX,y:newY};
       
       this.redrawCanvas();
@@ -534,18 +535,19 @@ export class CertificateGeneratorComponent implements AfterViewInit {
       const scaleX = this.backgroundImage.width / this.canvas!.width;
       const scaleY = this.backgroundImage.height / this.canvas!.height;
 
+      // Calcular posiciones efectivas por fila (para dynamic spacing real)
+      const effective = this.computeEffectivePositions(data);
       // Dibujar cada campo de texto con soporte para caracteres especiales
       this.excelHeaders.forEach(header => {
         const settings = this.fieldSettings[header];
-        ctx.font = `${settings.fontSize * scaleX}px Arial`;
+        const eff = effective[header] || { x: settings.x, y: settings.y };
+        ctx.font = `${settings.fontSize * scaleX}px ${settings.fontFamily || 'Arial'}`;
         ctx.fillStyle = settings.color;
-        
-        // Asegurar que el texto se renderice correctamente con caracteres especiales
         const text = String(data[header] || '').normalize('NFC');
         ctx.fillText(
           text,
-          settings.x * scaleX,
-          settings.y * scaleY
+          eff.x * scaleX,
+          eff.y * scaleY
         );
       });
 
@@ -559,6 +561,77 @@ export class CertificateGeneratorComponent implements AfterViewInit {
         }, 'image/png');
       }
     });
+  }
+  private getFieldDisplayText(header:string, row:ExcelRow|null):string {
+    const sampleValue = row ? String(row[header] ?? '') : '';
+    return (this.showRealData && sampleValue) ? sampleValue : `[${header}]`;
+  }
+  private measureHeaderWidth(header:string, row:ExcelRow|null):number {
+    const base = this.fieldSettings[header];
+    if(!base || !this.ctx) return 0;
+    this.ctx.font = `${base.fontSize}px ${base.fontFamily || 'Arial'}`;
+    return this.ctx.measureText(this.getFieldDisplayText(header, row)).width;
+  }
+  private computeEffectivePositions(row:ExcelRow|null):{[k:string]:{x:number;y:number;width:number}} {
+    const out: {[k:string]:{x:number;y:number;width:number}} = {};
+    // start with base positions
+    this.excelHeaders.forEach(h => {
+      const base = this.fieldSettings[h];
+      out[h] = { x: base.x, y: base.y, width: this.measureHeaderWidth(h, row) };
+    });
+    if(!this.dynamicSpacing || !this.ctx) return out;
+    // Agrupar por baseline aproximada
+    const baselineClusters: string[][] = [];
+    const used = new Set<string>();
+    const headersByY = [...this.excelHeaders].sort((a,b)=> out[a].y - out[b].y);
+    for(const h of headersByY){
+      if(used.has(h)) continue;
+      const cluster = [h];
+      used.add(h);
+      for(const k of headersByY){
+        if(used.has(k)) continue;
+        if(Math.abs(out[h].y - out[k].y) <= this.dynamicBaselineTolerance){
+          cluster.push(k); used.add(k);
+        }
+      }
+      baselineClusters.push(cluster);
+    }
+    // Para cada cluster ordenar por X y crear grupos de flujo según proximidad
+    for(const cluster of baselineClusters){
+      if(cluster.length < 2) continue;
+      const ordered = cluster.sort((a,b)=> out[a].x - out[b].x);
+      let currentGroup: string[] = [];
+      const flushGroup = () => {
+        if(currentGroup.length > 1){
+          // reflow
+          let anchorX = Math.min(...currentGroup.map(h=> out[h].x));
+          const baselineY = out[currentGroup[0]].y; // usar baseline del primero
+          for(const h of currentGroup){
+            out[h].x = anchorX;
+            out[h].y = baselineY; // unificar baseline
+            anchorX += out[h].width + this.dynamicSpacingGap;
+          }
+        }
+        currentGroup = [];
+      };
+      for(let i=0;i<ordered.length;i++){
+        const h = ordered[i];
+        if(currentGroup.length === 0){
+          currentGroup.push(h);
+        } else {
+          const prev = currentGroup[currentGroup.length-1];
+            const gap = out[h].x - (out[prev].x + out[prev].width);
+          if(gap < this.dynamicSpacingProximity){
+            currentGroup.push(h);
+          } else {
+            flushGroup();
+            currentGroup.push(h);
+          }
+        }
+      }
+      flushGroup();
+    }
+    return out;
   }
 
   async previewCertificate() {
@@ -670,5 +743,29 @@ export class CertificateGeneratorComponent implements AfterViewInit {
     if(!el) return;
     if(document.fullscreenElement){ document.exitFullscreen(); }
     else { el.requestFullscreen().catch(()=>{}); }
+  }
+  async onFontChange(header:string){
+    const settings = this.fieldSettings[header];
+    if(!settings) return;
+    const family = settings.fontFamily || 'Arial';
+    // Intentar cargar si no está disponible
+    try {
+      if(document && 'fonts' in document){
+        // Heurística: si ya está loaded skip
+        const already = Array.from((document as any).fonts).some((f:any)=> f.family.replace(/"/g,'') === family);
+        if(!already){
+          // Cargar variante normal 400
+          const fontFace = new FontFace(family, `local('${family}'), url(https://fonts.gstatic.com/s/${family.replace(/\s+/g,'').toLowerCase()}/v1/latin.woff2) format('woff2')`);
+          try { await fontFace.load(); (document as any).fonts.add(fontFace); } catch { /* ignore */ }
+        }
+        await (document as any).fonts.ready;
+      }
+    } catch { /* ignore */ }
+    this.redrawCanvas();
+  }
+  private expandExclusive(header:string){
+    // Mantener opciones tal cual
+    Object.keys(this.expandedPanels).forEach(k=>{ if(k !== '__opts') this.expandedPanels[k] = false; });
+    this.expandedPanels[header] = true;
   }
 }

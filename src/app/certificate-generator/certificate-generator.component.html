@@ -64,7 +64,7 @@
                   <label>Color<input type="color" [(ngModel)]="fieldSettings[header].color" (change)="redrawCanvas()"></label>
                   <label>X<input type="number" [(ngModel)]="fieldSettings[header].x" (change)="redrawCanvas()"></label>
                   <label>Y<input type="number" [(ngModel)]="fieldSettings[header].y" (change)="redrawCanvas()"></label>
-                  <label style="grid-column:1/3">Fuente<select [(ngModel)]="fieldSettings[header].fontFamily" (change)="redrawCanvas()">
+                  <label style="grid-column:1/3">Fuente<select [(ngModel)]="fieldSettings[header].fontFamily" (change)="onFontChange(header)">
                     <option *ngFor="let f of availableFonts" [value]="f">{{ f }}</option>
                   </select></label>
                 </div>
